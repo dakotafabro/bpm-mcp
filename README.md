@@ -54,9 +54,14 @@ Install a package. Enforces human approval before installing. Returns an approva
 
 Execute the install after human approval. Set `always_allow=true` to auto-approve this package in the future.
 
+After a successful install, the result includes:
+
+- any warnings `bpm install` printed, such as `[BPM_INSTALL_CONFLICT]`, deprecations and review notices, each with its `Action:` line
+- the package's instructions (its entry file, or the merged file when it has an overlay), so they apply for the rest of the session instead of waiting for the next session's AGENTS.md. Text over 20,000 characters is cut off with the path to the full file.
+
 ### `bpm_remove(package_name)`
 
-Remove an installed package.
+Remove an installed package. Warnings from `bpm remove`, such as `[BPM_REMOVE_STILL_NEEDED]` when another installed package depends on it, are included in the result.
 
 ### `bpm_list()`
 
@@ -87,6 +92,12 @@ The approval policy is stored at `~/.bpm/mcp-policy.json`.
 - **Install, remove, and list** shell out to the local `bpm` CLI
 - The server never installs packages without going through the approval gate
 - All operations are local - no data leaves your machine except registry search queries
+
+## Testing
+
+```bash
+uv run --with pytest --with pytest-asyncio pytest -q tests
+```
 
 ## License
 
