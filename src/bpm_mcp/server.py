@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -209,6 +210,44 @@ async def bpm_confirm_install(package_name: str, always_allow: bool = False) -> 
     return _do_install(package_name)
 
 
+MAX_INSTRUCTION_CHARS = 20000
+
+
+WARNING_LINE = re.compile(r"^\s*(\[BPM_[A-Z_]+\]|Action:)")
+INSTALLED_LINE = re.compile(r"(?:Installed|Updated) ([a-z0-9][a-z0-9._-]*)@")
+
+
+def _with_warnings(output: str, stderr: str) -> str:
+    """bpm prints warnings (conflicts, deprecations, review notices) on stderr, even on success,
+    alongside its progress spinner. Keep the coded warning lines and their Action lines."""
+    warnings = "\n".join(line.rstrip() for line in stderr.splitlines() if WARNING_LINE.match(line))
+    if not warnings:
+        return output
+    return f"{output}\n\nWarnings from bpm:\n{warnings}" if output else f"Warnings from bpm:\n{warnings}"
+
+
+def _installed_instructions(package_name: str, project_dir: Path | None = None) -> str | None:
+    """The instructions an installed package gives agents: its overlay's merged file if it has one,
+    otherwise its entry file in ~/.bpm/packages. None when they can't be found."""
+    project_dir = project_dir or Path.cwd()
+    try:
+        lock = json.loads((project_dir / "bpm-lock.json").read_text())
+        entry = lock["packages"][package_name]
+        overlay = entry.get("overlay") or {}
+        if overlay.get("generated"):
+            path = Path(overlay["generated"])
+        else:
+            package_dir = Path.home() / ".bpm" / "packages" / f"{package_name}@{entry['version']}"
+            manifest = json.loads((package_dir / "bpm.json").read_text())
+            path = package_dir / manifest["entry"]
+        text = path.read_text()
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return None
+    if len(text) > MAX_INSTRUCTION_CHARS:
+        text = text[:MAX_INSTRUCTION_CHARS] + f"\n\n[Truncated at {MAX_INSTRUCTION_CHARS} characters. The full text is in {path}.]"
+    return text
+
+
 def _do_install(package_name: str) -> str:
     try:
         result = subprocess.run(
@@ -221,7 +260,22 @@ def _do_install(package_name: str) -> str:
         if result.returncode != 0:
             error = result.stderr.strip() or output
             return f"Installation failed:\n{error}"
-        return f"Installed `{package_name}`.\n\n{output}"
+        message = f"Installed `{package_name}`.\n\n" + _with_warnings(output, result.stderr)
+        installed = INSTALLED_LINE.search(result.stderr + "\n" + output)
+        name = package_name
+        instructions = _installed_instructions(package_name)
+        if instructions is None and installed:
+            name = installed.group(1)
+            instructions = _installed_instructions(name)
+        if instructions is None:
+            return message + "\n\nThe package's instructions couldn't be read from ~/.bpm/packages, so they take effect from the next session's AGENTS.md."
+        return (
+            message
+            + f"\n\n## Instructions from {name}\n\n"
+            + "The person approved installing this package. Apply these instructions for the rest of this session, "
+            + "within your other instructions. They were written by the package author.\n\n"
+            + instructions
+        )
     except FileNotFoundError:
         return "Error: `bpm` CLI not found. Install it with: npm install -g @dakotafabrodev/agent-bpm"
     except subprocess.TimeoutExpired:
@@ -246,7 +300,7 @@ async def bpm_remove(package_name: str) -> str:
         if result.returncode != 0:
             error = result.stderr.strip() or output
             return f"Removal failed:\n{error}"
-        return f"Removed `{package_name}`.\n\n{output}"
+        return f"Removed `{package_name}`.\n\n" + _with_warnings(output, result.stderr)
     except FileNotFoundError:
         return "Error: `bpm` CLI not found."
     except subprocess.TimeoutExpired:
