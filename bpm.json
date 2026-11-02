@@ -1,6 +1,6 @@
 {
   "name": "bpm-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "extension",
   "description": "MCP server for BPM - discover, inspect, and install behavioral packages from within agent sessions. Enforces human approval for installs.",
   "entry": "src/bpm_mcp/server.py",
